@@ -1,4 +1,12 @@
-export type ChatMsg = { role: "user" | "assistant"; content: string; ts: number };
+// core/state.ts
+
+export type Role = "user" | "assistant";
+
+// Ваш тип сообщения
+export type ChatMsg = { role: Role; content: string; ts: number };
+
+// Для совместимости с app/seed/page.tsx (там useState<Msg[]>)
+export type Msg = ChatMsg;
 
 export type ChatState = {
   v: 1;
@@ -12,6 +20,6 @@ export type SoulState = {
   memory: string[];
   updatedAt: number;
 
-  // ВАЖНО: добавляем
+  // чат (опционально)
   chat?: ChatState;
 };

@@ -46,7 +46,7 @@ async function deriveAesKeyFromSeed(seed: string, salt: Uint8Array) {
     {
       name: "PBKDF2",
       hash: "SHA-256",
-      salt,               // <-- ОБЯЗАТЕЛЬНО
+      salt: new Uint8Array(salt), // копия -> нормальный BufferSource
       iterations: 210_000 // <-- ОБЯЗАТЕЛЬНО
     },
     baseKey,

@@ -61,9 +61,12 @@ export default function SeedPage() {
   const [cid, setCid] = useState<string>("");
 
   // chat UI
-  const [messages, setMessages] = useState<Msg[]>([
-    { role: "assistant", content: "Welcome. Click “Load Soul” to start chatting.", ts: nowTs() },
-  ]);
+  const [messages, setMessages] = useState<
+  { role: "user" | "assistant"; content: string; ts: number }[]
+>([
+  { role: "assistant", content: "Welcome. Click “Load Soul” to start chatting.", ts: nowTs() },
+]);
+
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [loadingSoul, setLoadingSoul] = useState(false);
@@ -165,7 +168,7 @@ export default function SeedPage() {
       version: "mvp-1",
       profile: { name: "SoulNet Demo", bio: "Encrypted identity", tone: "calm" },
       memory: [],
-      chat: [],
+      chat: { v: 1, messages: [], updatedAt: nowTs() },
       updatedAt: nowTs(),
     };
 
@@ -221,7 +224,11 @@ export default function SeedPage() {
       setSoul(st);
       setEnc(snap);
 
-      const restored = (st.chat || []).map((m) => ({ ...m, ts: m.ts ?? nowTs() }));
+      const restored = (st.chat?.messages ?? []).map((m) => ({
+  ...m,
+  ts: m.ts ?? nowTs(),
+}));
+
       if (restored.length) {
         setMessages(restored);
       } else {
@@ -250,7 +257,7 @@ export default function SeedPage() {
 
     const updated: SoulState = {
       ...soul,
-      chat: nextMessages,
+      chat: { v: 1, messages: nextMessages, updatedAt: nowTs() },
       updatedAt: nowTs(),
     };
 

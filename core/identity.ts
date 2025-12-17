@@ -7,9 +7,13 @@ function hexFromBytes(bytes: Uint8Array) {
 }
 
 async function sha256(data: Uint8Array) {
-  const digest = await crypto.subtle.digest("SHA-256", data);
+  // Делает копию в новый Uint8Array с обычным ArrayBuffer
+  const bytes = new Uint8Array(data);
+
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
   return new Uint8Array(digest);
 }
+
 
 /**
  * Детерминированный "адрес души" из seed.
