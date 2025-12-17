@@ -29,6 +29,11 @@ function newCid() {
   return `cid_${crypto.randomBytes(16).toString("hex")}`;
 }
 
+function getSnapshotsDir() {
+  const root = process.env.VERCEL ? "/tmp/soulnet-data" : path.join(process.cwd(), "data");
+  return path.join(root, "snapshots");
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => null);
@@ -40,7 +45,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing blob" }, { status: 400 });
     }
 
-    const dir = path.join(process.cwd(), "data", "snapshots");
+    const dir = getSnapshotsDir();
     await fs.mkdir(dir, { recursive: true });
 
     const cid = newCid();

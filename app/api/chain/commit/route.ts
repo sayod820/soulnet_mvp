@@ -10,6 +10,12 @@ function safeId(id: string) {
 
 type Record = { cid: string; ts: number };
 
+function getChainDir() {
+  // Vercel: писать можно только в /tmp (а /var/task — read-only)
+  const root = process.env.VERCEL ? "/tmp/soulnet-data" : path.join(process.cwd(), "data");
+  return path.join(root, "chain");
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -23,7 +29,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const dir = path.join(process.cwd(), "data", "chain");
+    const dir = getChainDir();
     await fs.mkdir(dir, { recursive: true });
 
     const file = path.join(dir, `${soulAddress}.json`);

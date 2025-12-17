@@ -8,12 +8,20 @@ function safeId(id: string) {
   return (id || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 120);
 }
 
-export async function GET(_req: Request, ctx: { params: Promise<{ cid: string }> }) {
+function getSnapshotsDir() {
+  const root = process.env.VERCEL ? "/tmp/soulnet-data" : path.join(process.cwd(), "data");
+  return path.join(root, "snapshots");
+}
+
+export async function GET(
+  _req: Request,
+  ctx: { params: Promise<{ cid: string }> }
+) {
   try {
-    const { cid } = await ctx.params; // <-- фикс Next: params это Promise
+    const { cid } = await ctx.params; // params это Promise
     const safeCid = safeId(cid);
 
-    const file = path.join(process.cwd(), "data", "snapshots", `${safeCid}.json`);
+    const file = path.join(getSnapshotsDir(), `${safeCid}.json`);
     const json = await fs.readFile(file, "utf-8");
 
     // возвращаем ЧИСТЫЙ blob (то, что ожидает decrypt)

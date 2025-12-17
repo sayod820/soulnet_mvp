@@ -4,28 +4,37 @@ import path from "path";
 
 export const runtime = "nodejs";
 
-function safeId(id: string) {
-  return (id || "").replace(/[^a-zA-Z0-9x_-]/g, "").slice(0, 120);
+function safeSoulAddress(raw: string) {
+  const v = (raw || "").trim().toLowerCase();
+  // ожидаем 0x + 40 hex
+  if (!/^0x[0-9a-f]{40}$/.test(v)) return "";
+  return v;
+}
+
+function getChainDir() {
+  const root = process.env.VERCEL ? "/tmp/soulnet-data" : path.join(process.cwd(), "data");
+  return path.join(root, "chain");
 }
 
 export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const soulAddress = safeSoulAddress(searchParams.get("soulAddress") || "");
+
+  if (!soulAddress) {
+    return NextResponse.json(
+      { error: "Missing/invalid soulAddress" },
+      { status: 400 }
+    );
+  }
+
   try {
-    const { searchParams } = new URL(req.url);
-    const soulAddress = safeId(searchParams.get("soulAddress") || "");
-
-    if (!soulAddress) {
-      return NextResponse.json(
-        { ok: false, error: "Missing soulAddress" },
-        { status: 400 }
-      );
-    }
-
-    const file = path.join(process.cwd(), "data", "chain", `${soulAddress}.json`);
+    const file = path.join(getChainDir(), `${soulAddress}.json`);
     const json = await fs.readFile(file, "utf-8");
-    const rec = JSON.parse(json);
+    const rec = JSON.parse(json) as { cid: string; ts: number };
 
     return NextResponse.json({ ok: true, soulAddress, ...rec });
   } catch {
-    return NextResponse.json({ ok: false, error: "Not found" }, { status: 404 });
+    // важно: возвращаем soulAddress для дебага
+    return NextResponse.json({ error: "Not found", soulAddress }, { status: 404 });
   }
 }
