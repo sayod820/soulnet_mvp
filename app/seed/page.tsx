@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { generateSeed, validateSeed } from "@/core/seed";
 import { seedToSoulAddress } from "@/core/identity";
-import type { SoulState, Msg } from "@/core/state";
+import type { SoulState } from "@/core/state";
 import type { EncryptedBlob } from "@/core/vault";
 import { encryptSoulState, decryptSoulState } from "@/core/vault";
 
@@ -19,17 +19,25 @@ import {
 
 import { uploadSnapshot, downloadSnapshot } from "@/core/ipfs";
 import { commitCID, getLastCIDFromChain } from "@/core/chain";
-import { chat } from "@/core/chat"; // важно: используем реальный вызов /api/chat
+import { chat } from "@/core/chat";
 
-type ViewMode = "seed" | "chat" | "advanced";
+// ===== Types (fix build: no Msg import needed) =====
+type Msg = { role: "user" | "assistant"; content: string; ts: number };
+
+type Tab =
+  | "architecture"
+  | "identity"
+  | "chat"
+  | "protocol"
+  | "registry"
+  | "security";
 
 const SESSION_SEED_KEY = "soulnet:seed:session";
-const SESSION_VIEW_KEY = "soulnet:view:session";
+const SESSION_TAB_KEY = "soulnet:tab:session";
 
 function nowTs() {
   return Date.now();
 }
-
 function safeSessionGet(key: string) {
   try {
     return sessionStorage.getItem(key) || "";
@@ -43,45 +51,50 @@ function safeSessionSet(key: string, val: string) {
   } catch {}
 }
 
+function shortAddr(a?: string | null) {
+  if (!a) return "null";
+  return a.slice(0, 10) + "...";
+}
+
 export default function SeedPage() {
   const [mounted, setMounted] = useState(false);
 
-  const [view, setView] = useState<ViewMode>("seed");
+  // tab
+  const [tab, setTab] = useState<Tab>("architecture");
 
   // seed/address
-  const [seedShown, setSeedShown] = useState(""); // показываем только после Create
-  const [seedInput, setSeedInput] = useState(""); // фактический seed (но хранится только в sessionStorage)
+  const [seedShown, setSeedShown] = useState("");
+  const [seedInput, setSeedInput] = useState("");
   const [addr, setAddr] = useState("");
 
-  // vault snapshot
+  // snapshot/soul
   const [enc, setEnc] = useState<EncryptedBlob | null>(null);
   const [soul, setSoul] = useState<SoulState | null>(null);
 
-  // advanced cid
+  // CID
   const [cid, setCid] = useState<string>("");
 
-  // chat UI
-  const [messages, setMessages] = useState<
-  { role: "user" | "assistant"; content: string; ts: number }[]
->([
-  { role: "assistant", content: "Welcome. Click “Load Soul” to start chatting.", ts: nowTs() },
-]);
-
+  // chat
+  const [messages, setMessages] = useState<Msg[]>([
+    { role: "assistant", content: "Welcome. Click “Load Soul” to start chatting.", ts: nowTs() },
+  ]);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [loadingSoul, setLoadingSoul] = useState(false);
 
-  // UI info
+  // ui info/errors
   const [localInfo, setLocalInfo] = useState("loading…");
   const [err, setErr] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
+
+  const seedOk = useMemo(() => validateSeed(seedInput.trim()), [seedInput]);
 
   function refreshLocalInfo() {
     const a = getActiveSoulAddress();
     const snap = loadEncryptedSnapshot();
     const last = getLastCID();
     setLocalInfo(
-      `activeSoul=${a ? a.slice(0, 10) + "..." : "null"} | snapshot=${snap ? "yes" : "no"} | cid=${last ?? "null"}`
+      `activeSoul=${shortAddr(a)} | snapshot=${snap ? "yes" : "no"} | cid=${last ?? "null"}`
     );
   }
 
@@ -89,19 +102,25 @@ export default function SeedPage() {
     setErr(e?.message || fallback);
   }
 
-  // ===== Mount init (fix hydration + restore session state) =====
+  // ===== Init =====
   useEffect(() => {
     setMounted(true);
 
-    // restore seed from sessionStorage (so F5 doesn't ask again)
     const s = safeSessionGet(SESSION_SEED_KEY);
     if (s) setSeedInput(s);
 
-    // restore last view from sessionStorage
-    const v = safeSessionGet(SESSION_VIEW_KEY) as ViewMode;
-    if (v === "seed" || v === "chat" || v === "advanced") setView(v);
+    const t = safeSessionGet(SESSION_TAB_KEY) as Tab;
+    if (
+      t === "architecture" ||
+      t === "identity" ||
+      t === "chat" ||
+      t === "protocol" ||
+      t === "registry" ||
+      t === "security"
+    ) {
+      setTab(t);
+    }
 
-    // restore local snapshot/cid/addr for UI info
     const last = getLastCID();
     if (last) setCid(last);
 
@@ -115,26 +134,22 @@ export default function SeedPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // keep view in sessionStorage
+  // keep tab in session
   useEffect(() => {
     if (!mounted) return;
-    safeSessionSet(SESSION_VIEW_KEY, view);
-  }, [mounted, view]);
+    safeSessionSet(SESSION_TAB_KEY, tab);
+  }, [mounted, tab]);
 
-  // autoscroll
+  // autoscroll chat
   useEffect(() => {
-    if (view !== "chat") return;
+    if (tab !== "chat") return;
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, view]);
+  }, [messages, tab]);
 
-  // ===== AUTO RESTORE CHAT ON F5 =====
-  // If user is on chat view and seed exists in sessionStorage,
-  // we automatically decrypt and restore messages.
+  // auto restore chat when open tab chat
   useEffect(() => {
     if (!mounted) return;
-    if (view !== "chat") return;
-
-    // already loaded or loading
+    if (tab !== "chat") return;
     if (soul || loadingSoul) return;
 
     const s = seedInput.trim();
@@ -143,12 +158,11 @@ export default function SeedPage() {
     const snap = loadEncryptedSnapshot();
     if (!snap) return;
 
-    // auto load
     onLoadSoulForChat(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mounted, view]);
+  }, [mounted, tab]);
 
-  // ===== Seed actions =====
+  // ===== Actions =====
   async function onCreateSeed() {
     setErr("");
     setSoul(null);
@@ -163,7 +177,6 @@ export default function SeedPage() {
     setAddr(a);
     setActiveSoulAddress(a);
 
-    // create initial soul state (empty chat)
     const empty: SoulState = {
       version: "mvp-1",
       profile: { name: "SoulNet Demo", bio: "Encrypted identity", tone: "calm" },
@@ -177,7 +190,7 @@ export default function SeedPage() {
     saveEncryptedSnapshot(blob);
 
     refreshLocalInfo();
-    setView("seed");
+    setTab("identity");
   }
 
   async function onRestoreFromSeed() {
@@ -195,27 +208,16 @@ export default function SeedPage() {
     setActiveSoulAddress(a);
 
     refreshLocalInfo();
-    setView("seed");
+    setTab("identity");
   }
 
-  function onOpenChat() {
-    setErr("");
-    setView("chat");
-  }
-
-  function onBackToSeed() {
-    setErr("");
-    setView("seed");
-  }
-
-  // ===== Chat: Load / Send / Auto-save =====
   async function onLoadSoulForChat(silent = false) {
     if (!silent) setErr("");
     setLoadingSoul(true);
 
     try {
       const s = seedInput.trim();
-      if (!validateSeed(s)) throw new Error("Go to “Seed” and paste your 24-word seed first.");
+      if (!validateSeed(s)) throw new Error('Go to “Identity (Seed)” and paste your 24-word seed first.');
 
       const snap = loadEncryptedSnapshot();
       if (!snap) throw new Error("No local snapshot found. Create seed first.");
@@ -224,10 +226,11 @@ export default function SeedPage() {
       setSoul(st);
       setEnc(snap);
 
-      const restored = (st.chat?.messages ?? []).map((m) => ({
-  ...m,
-  ts: m.ts ?? nowTs(),
-}));
+      const restored: Msg[] = (st.chat?.messages ?? []).map((m: any) => ({
+        role: m.role,
+        content: m.content,
+        ts: m.ts ?? nowTs(),
+      }));
 
       if (restored.length) {
         setMessages(restored);
@@ -250,14 +253,13 @@ export default function SeedPage() {
   }
 
   async function autosaveChat(nextMessages: Msg[]) {
-    // autosave only if we can encrypt
     const s = seedInput.trim();
     if (!validateSeed(s)) return;
     if (!soul) return;
 
     const updated: SoulState = {
       ...soul,
-      chat: { v: 1, messages: nextMessages, updatedAt: nowTs() },
+      chat: { v: 1, messages: nextMessages as any, updatedAt: nowTs() },
       updatedAt: nowTs(),
     };
 
@@ -286,7 +288,6 @@ export default function SeedPage() {
     setMessages(base);
 
     try {
-      // call real /api/chat
       const r = await chat({
         messages: base.map((x) => ({ role: x.role, content: x.content })),
         soul,
@@ -296,7 +297,6 @@ export default function SeedPage() {
       const nextAll = [...base, nextAssistant];
       setMessages(nextAll);
 
-      // AUTO-SAVE after assistant reply
       await autosaveChat(nextAll);
     } catch (e: any) {
       setError(e, "Send failed");
@@ -305,7 +305,6 @@ export default function SeedPage() {
     }
   }
 
-  // ===== Advanced (kept, hidden under Advanced) =====
   async function onBackupToCID() {
     setErr("");
     try {
@@ -385,246 +384,359 @@ export default function SeedPage() {
     setMessages([{ role: "assistant", content: "Welcome. Click “Load Soul” to start chatting.", ts: nowTs() }]);
     setErr("");
     refreshLocalInfo();
-
-    // seed is session-only; user asked not to lose it on refresh,
-    // but "Wipe local" should not force-remove session seed.
-    // If you want to clear it too, uncomment:
-    // safeSessionSet(SESSION_SEED_KEY, "");
-
-    setView("seed");
+    setTab("architecture");
   }
 
-  // avoid hydration mismatch: render localInfo only after mounted
   const localInfoText = mounted ? localInfo : "loading…";
-  const seedOk = validateSeed(seedInput.trim());
+
+  // ===== UI helpers =====
+  const TabBtn = ({
+    id,
+    label,
+  }: {
+    id: Tab;
+    label: string;
+  }) => (
+    <button
+      type="button"
+      onClick={() => setTab(id)}
+      className={[
+        "rounded-lg border px-3 py-2 text-xs font-medium transition",
+        tab === id
+          ? "border-zinc-200 bg-zinc-100 text-zinc-900"
+          : "border-zinc-700 text-zinc-200 hover:bg-zinc-900/40",
+      ].join(" ")}
+    >
+      {label}
+    </button>
+  );
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
       <div className="mx-auto max-w-3xl p-6 space-y-4">
-        <div className="text-sm text-zinc-400">SoulNet MVP • One Screen</div>
+        <div className="text-xs text-zinc-400 text-center">
+          SoulNet v3.2 • Architectural Demonstrator • One Screen
+        </div>
 
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 space-y-3">
-          <div className="text-lg font-semibold">Create / Restore</div>
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/30 shadow-[0_0_0_1px_rgba(255,255,255,0.02)]">
+          <div className="p-5 space-y-3">
+            <div className="text-lg font-semibold">SoulNet — Non-Custodial AI Identity</div>
 
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={onCreateSeed}
-              className="rounded-lg bg-zinc-100 text-zinc-900 px-4 py-2 text-sm font-medium"
-            >
-              Create seed
-            </button>
-
-            <button
-              type="button"
-              onClick={onRestoreFromSeed}
-              className="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium"
-            >
-              Restore from seed
-            </button>
-
-            <button
-              type="button"
-              onClick={onOpenChat}
-              className="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium"
-            >
-              Open Chat
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setView((v) => (v === "advanced" ? "seed" : "advanced"))}
-              className="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium"
-            >
-              Advanced
-            </button>
-
-            <button
-              type="button"
-              onClick={onWipeLocal}
-              className="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium"
-            >
-              Wipe local
-            </button>
-          </div>
-
-          <div className="text-xs text-zinc-500">Local: {localInfoText}</div>
-
-          {/* SEED BLOCK */}
-          {view === "seed" ? (
-            <div className="space-y-3">
-              <div className="text-xs text-zinc-400">
-  <b>Demo note:</b> The seed is <b>never sent to any server</b>. For demo convenience only, it may be cached in this tab session (sessionStorage). In production, users store the seed offline (paper / secure vault).
-</div>
-
-
-              <textarea
-                value={seedInput}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setSeedInput(v);
-                  safeSessionSet(SESSION_SEED_KEY, v);
-                }}
-                placeholder="Paste your 24-word seed here…"
-                rows={4}
-                className="w-full rounded-lg bg-zinc-950 border border-zinc-800 p-3 text-sm outline-none"
-              />
-
-              {seedShown ? (
-                <div className="text-xs text-zinc-400 break-words">
-                  <div className="font-medium text-zinc-300 mb-1">Generated seed (copy & store safely):</div>
-                  {seedShown}
-                </div>
-              ) : null}
-
-              {addr ? (
-                <div className="rounded-lg border border-emerald-900/60 bg-emerald-950/20 p-3">
-                  <div className="text-xs text-emerald-200/90">soul_address</div>
-                  <div className="font-mono text-sm break-all">{addr}</div>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-
-          {/* CHAT BLOCK */}
-          {view === "chat" ? (
-            <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="text-lg font-semibold">Digital Soul (Chat)</div>
-                <div className="text-xs text-zinc-500">
-                  Seed: {seedOk ? "ok" : "missing"} • Auto-save: on
-                </div>
-              </div>
-
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => onLoadSoulForChat(false)}
-                  disabled={!seedOk || loadingSoul}
-                  className="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium disabled:opacity-50"
-                >
-                  {loadingSoul ? "Loading…" : "Load Soul"}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={onBackToSeed}
-                  className="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium"
-                >
-                  Back to Seed
-                </button>
-              </div>
-
-              {!seedOk ? (
-                <div className="text-xs text-zinc-500">
-                  Go to “Seed” and paste/restore your 24-word seed to unlock chat decryption.
-                </div>
-              ) : null}
-
-              <div
-                ref={listRef}
-                className="h-[420px] overflow-auto rounded-lg border border-zinc-800 bg-zinc-950 p-3 space-y-3"
+            <div className="flex flex-wrap gap-2">
+              <TabBtn id="architecture" label="Architecture" />
+              <TabBtn id="identity" label="Identity (Seed)" />
+              <TabBtn id="chat" label="SoulCore (Chat)" />
+              <TabBtn id="protocol" label="Soul Protocol (CID)" />
+              <TabBtn id="registry" label="Registry (Chain-Agnostic)" />
+              <TabBtn id="security" label="Security (Zero-Access)" />
+              <button
+                type="button"
+                onClick={onWipeLocal}
+                className="rounded-lg border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-200 hover:bg-zinc-900/40"
               >
-                {messages.map((m, i) => (
-                  <div key={i} className={m.role === "user" ? "text-right" : "text-left"}>
-                    <div
-                      className={[
-                        "inline-block max-w-[92%] whitespace-pre-wrap break-words rounded-xl px-3 py-2 text-sm",
-                        m.role === "user"
-                          ? "bg-emerald-600/20 border border-emerald-900/60"
-                          : "bg-zinc-900/50 border border-zinc-800",
-                      ].join(" ")}
+                Wipe local
+              </button>
+            </div>
+
+            <div className="text-xs text-zinc-500">Local: {localInfoText}</div>
+
+            {/* ===== CONTENT CARD ===== */}
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-950/30 p-5">
+              {/* Architecture */}
+              {tab === "architecture" ? (
+                <div className="space-y-3">
+                  <div className="text-sm font-semibold">Architecture Proof Map</div>
+                  <div className="text-xs text-zinc-400">
+                    This demonstrator proves 5 core properties of SoulNet v3.2:
+                  </div>
+                  <ul className="list-disc pl-5 text-xs text-zinc-300 space-y-1">
+                    <li>
+                      <b>Non-custodial ownership:</b> seed = sole access key (no accounts, no recovery by operator).
+                    </li>
+                    <li>
+                      <b>Recovery-first protocol:</b> encrypted snapshot → CID → restore on any device.
+                    </li>
+                    <li>
+                      <b>Chain-agnostic registry:</b> registry stores references (CID), not data; chain is replaceable.
+                    </li>
+                    <li>
+                      <b>Zero-access security:</b> platform cannot decrypt, reset, or clone a soul.
+                    </li>
+                    <li>
+                      <b>Layer separation:</b> SoulCore is UI-independent (chat is only a demo UI).
+                    </li>
+                  </ul>
+
+                  <div className="pt-2 text-xs text-zinc-400">
+                    Recommended 3-minute demo flow:
+                  </div>
+                  <ol className="list-decimal pl-5 text-xs text-zinc-300 space-y-1">
+                    <li>Identity (Seed): create seed → get soul_address</li>
+                    <li>SoulCore (Chat): Load Soul → send message → auto-save encrypted snapshot</li>
+                    <li>Soul Protocol (CID): Backup → CID → Restore ← CID</li>
+                    <li>Registry: Commit CID → Chain → Restore via Chain</li>
+                    <li>Security: show “zero-access” model and responsibility</li>
+                  </ol>
+                </div>
+              ) : null}
+
+              {/* Identity */}
+              {tab === "identity" ? (
+                <div className="space-y-4">
+                  <div className="text-sm font-semibold">Identity & Ownership (Seed-based)</div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={onCreateSeed}
+                      className="rounded-lg bg-zinc-100 text-zinc-900 px-4 py-2 text-xs font-semibold"
                     >
-                      {m.content}
+                      Create seed
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onRestoreFromSeed}
+                      className="rounded-lg border border-zinc-700 px-4 py-2 text-xs font-semibold text-zinc-200 hover:bg-zinc-900/40"
+                    >
+                      Restore from seed
+                    </button>
+                  </div>
+
+                  <div className="text-xs text-zinc-400">
+                    Ownership rule: This seed represents sole cryptographic ownership of the Digital Soul.
+                    SoulNet never receives, stores, or can recover this seed. Loss of seed = loss of access by design.
+                  </div>
+                  <div className="text-xs text-zinc-500">
+                    Demo note: seed is never sent to any server. For demo convenience only, it may be cached in this tab session (sessionStorage).
+                  </div>
+
+                  <textarea
+                    value={seedInput}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setSeedInput(v);
+                      safeSessionSet(SESSION_SEED_KEY, v);
+                    }}
+                    placeholder="Paste your 24-word seed here…"
+                    rows={4}
+                    className="w-full rounded-xl bg-zinc-950 border border-zinc-800 p-3 text-xs outline-none"
+                  />
+
+                  {seedShown ? (
+                    <div className="text-xs text-zinc-400 break-words">
+                      <div className="font-semibold text-zinc-300 mb-1">Generated seed (copy & store safely):</div>
+                      {seedShown}
+                    </div>
+                  ) : null}
+
+                  {addr ? (
+                    <div className="rounded-xl border border-emerald-900/60 bg-emerald-950/20 p-3">
+                      <div className="text-[11px] text-emerald-200/90">soul_address</div>
+                      <div className="font-mono text-xs break-all">{addr}</div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {/* Chat */}
+              {tab === "chat" ? (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm font-semibold">Digital Soul (Chat)</div>
+                    <div className="text-xs text-zinc-500">
+                      Seed: {seedOk ? "ok" : "missing"} • Auto-save: on
                     </div>
                   </div>
-                ))}
-              </div>
 
-              <div className="flex gap-2">
-                <input
-                  value={text}
-                  onChange={(e) => setText(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") onSend();
-                  }}
-                  placeholder="Type a message…"
-                  className="flex-1 rounded-lg bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={onSend}
-                  disabled={sending}
-                  className="rounded-lg bg-zinc-100 text-zinc-900 px-4 py-2 text-sm font-medium disabled:opacity-50"
-                >
-                  {sending ? "Sending…" : "Send"}
-                </button>
-              </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onLoadSoulForChat(false)}
+                      disabled={!seedOk || loadingSoul}
+                      className="rounded-lg border border-zinc-700 px-4 py-2 text-xs font-semibold disabled:opacity-50 hover:bg-zinc-900/40"
+                    >
+                      {loadingSoul ? "Loading…" : "Load Soul"}
+                    </button>
 
-              <div className="text-xs text-zinc-500">
-                Flow: Create/Restore seed → Open Chat → Load Soul → chat. Messages are auto-saved into the encrypted snapshot.
-                Refresh (F5) keeps seed in session + auto-restores chat.
-              </div>
+                    <button
+                      type="button"
+                      onClick={() => setTab("identity")}
+                      className="rounded-lg border border-zinc-700 px-4 py-2 text-xs font-semibold hover:bg-zinc-900/40"
+                    >
+                      Back to Seed
+                    </button>
+                  </div>
+
+                  {!seedOk ? (
+                    <div className="text-xs text-zinc-500">
+                      Go to “Identity (Seed)” and paste/restore your 24-word seed to unlock chat decryption.
+                    </div>
+                  ) : null}
+
+                  <div
+                    ref={listRef}
+                    className="h-[420px] overflow-auto rounded-xl border border-zinc-800 bg-zinc-950 p-3 space-y-3"
+                  >
+                    {messages.map((m, i) => (
+                      <div key={i} className={m.role === "user" ? "text-right" : "text-left"}>
+                        <div
+                          className={[
+                            "inline-block max-w-[92%] whitespace-pre-wrap break-words rounded-2xl px-3 py-2 text-xs",
+                            m.role === "user"
+                              ? "bg-emerald-600/20 border border-emerald-900/60"
+                              : "bg-zinc-900/50 border border-zinc-800",
+                          ].join(" ")}
+                        >
+                          {m.content}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex gap-2">
+                    <input
+                      value={text}
+                      onChange={(e) => setText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") onSend();
+                      }}
+                      placeholder="Type a message…"
+                      className="flex-1 rounded-xl bg-zinc-950 border border-zinc-800 px-3 py-2 text-xs outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={onSend}
+                      disabled={sending}
+                      className="rounded-xl bg-zinc-100 text-zinc-900 px-4 py-2 text-xs font-semibold disabled:opacity-50"
+                    >
+                      {sending ? "Sending…" : "Send"}
+                    </button>
+                  </div>
+
+                  <div className="text-[11px] text-zinc-500">
+                    Messages are auto-saved into the encrypted snapshot. Refresh (F5) keeps seed in session + auto-restores chat.
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Protocol (CID) */}
+              {tab === "protocol" ? (
+                <div className="space-y-4">
+                  <div className="text-sm font-semibold">Soul Protocol (Recovery-First) — Snapshot → CID → Restore</div>
+
+                  <ol className="list-decimal pl-5 text-xs text-zinc-300 space-y-1">
+                    <li>Local encrypted snapshot is created</li>
+                    <li>Snapshot is uploaded to decentralized storage (IPFS)</li>
+                    <li>CID represents the soul state reference</li>
+                    <li>Soul can be restored on any device using seed + CID</li>
+                  </ol>
+
+                  <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-3">
+                    <div className="text-[11px] text-zinc-400 mb-1">CID:</div>
+                    <input
+                      value={cid}
+                      onChange={(e) => setCid(e.target.value.trim())}
+                      placeholder="cid_..."
+                      className="w-full rounded-lg bg-zinc-900 border border-zinc-800 p-2 text-xs outline-none"
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={onBackupToCID}
+                      className="rounded-lg border border-zinc-700 px-4 py-2 text-xs font-semibold hover:bg-zinc-900/40"
+                    >
+                      Backup → CID
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onRestoreFromCID}
+                      className="rounded-lg border border-zinc-700 px-4 py-2 text-xs font-semibold hover:bg-zinc-900/40"
+                    >
+                      Restore ← CID
+                    </button>
+                  </div>
+
+                  <div className="text-[11px] text-zinc-500">
+                    Data is not stored on-chain. The chain stores references (CID) only.
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Registry */}
+              {tab === "registry" ? (
+                <div className="space-y-4">
+                  <div className="text-sm font-semibold">Non-Custodial Identity Registry (Chain-Agnostic)</div>
+
+                  <div className="text-xs text-zinc-300 space-y-2">
+                    <div>
+                      Registry stores metadata and references (CID), not user data. The soul remains independent from any single chain.
+                      Chain can be swapped without changing ownership model.
+                    </div>
+                    <div className="text-xs text-zinc-400">
+                      Supported targets (demo abstraction):
+                      <ul className="list-disc pl-5 mt-1 space-y-1">
+                        <li>Ethereum / EVM</li>
+                        <li>Polygon</li>
+                        <li>Arbitrum</li>
+                      </ul>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={onCommitToChain}
+                      className="rounded-lg border border-zinc-700 px-4 py-2 text-xs font-semibold hover:bg-zinc-900/40"
+                    >
+                      Commit CID → Chain
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onRestoreViaChain}
+                      className="rounded-lg border border-zinc-700 px-4 py-2 text-xs font-semibold hover:bg-zinc-900/40"
+                    >
+                      Restore via Chain
+                    </button>
+                  </div>
+
+                  <div className="text-[11px] text-zinc-500">
+                    Production version supports multiple chains through a registry adapter layer.
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Security */}
+              {tab === "security" ? (
+                <div className="space-y-3">
+                  <div className="text-sm font-semibold">Security Framework (Zero-Access)</div>
+
+                  <div className="text-xs text-zinc-300 space-y-2">
+                    <div>
+                      <b>Zero-access architecture:</b> platform cannot read, decrypt, reset, or technically recover a soul without the seed.
+                    </div>
+                    <div>
+                      <b>End-to-end encryption:</b> SoulState is encrypted client-side. Server (if present) only handles encrypted blobs and references.
+                    </div>
+                    <div>
+                      <b>User responsibility:</b> if the seed is compromised, an attacker can take the soul. This is a non-custodial tradeoff by design.
+                    </div>
+                    <div className="text-zinc-500">
+                      Note: this demo stores seed only in sessionStorage for convenience. Production UX requires explicit offline backup.
+                    </div>
+                  </div>
+                </div>
+              ) : null}
             </div>
-          ) : null}
 
-          {/* ADVANCED BLOCK */}
-          {view === "advanced" ? (
-            <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-4 space-y-3">
-              <div className="text-sm font-semibold text-zinc-200">Advanced (IPFS / Chain)</div>
-
-              <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3">
-                <div className="text-xs text-zinc-400 mb-1">CID:</div>
-                <input
-                  value={cid}
-                  onChange={(e) => setCid(e.target.value.trim())}
-                  placeholder="cid_..."
-                  className="w-full rounded-md bg-zinc-900 border border-zinc-800 p-2 text-xs outline-none"
-                />
+            {/* Error */}
+            {err ? (
+              <div className="mt-3 rounded-xl border border-red-900/60 bg-red-950/20 p-3 text-xs text-red-200">
+                {err}
               </div>
-
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={onBackupToCID}
-                  className="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium"
-                >
-                  Backup → CID
-                </button>
-                <button
-                  type="button"
-                  onClick={onRestoreFromCID}
-                  className="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium"
-                >
-                  Restore ← CID
-                </button>
-                <button
-                  type="button"
-                  onClick={onCommitToChain}
-                  className="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium"
-                >
-                  Commit CID → Chain
-                </button>
-                <button
-                  type="button"
-                  onClick={onRestoreViaChain}
-                  className="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium"
-                >
-                  Restore via Chain
-                </button>
-              </div>
-
-              <div className="text-xs text-zinc-500">
-                Not core UX. Demo path for “snapshot → CID → chain registry”.
-              </div>
-            </div>
-          ) : null}
-
-          {err ? (
-            <div className="rounded-lg border border-red-900/60 bg-red-950/20 p-3 text-sm text-red-200">
-              {err}
-            </div>
-          ) : null}
+            ) : null}
+          </div>
         </div>
       </div>
     </div>
