@@ -454,8 +454,9 @@ export default function SeedPage() {
           {view === "seed" ? (
             <div className="space-y-3">
               <div className="text-xs text-zinc-400">
-                Seed is stored only in <b>sessionStorage</b> (this tab). It survives refresh (F5), but is cleared when you close the tab.
-              </div>
+  <b>Demo note:</b> The seed is <b>never sent to any server</b>. For demo convenience only, it may be cached in this tab session (sessionStorage). In production, users store the seed offline (paper / secure vault).
+</div>
+
 
               <textarea
                 value={seedInput}
